@@ -150,6 +150,3 @@ On purpose, to keep the app simple and focused:
 
 Built by **Lakshay**, a Computer Science student at Chandigarh University, as a first Android app and a tool for his own training.
 
-## License
-
-Add a license of your choice (for example MIT) before publishing.

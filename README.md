@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" alt="DimGym logo" width="200">
+  <img src="app/src/main/res/drawable/dimgym_logo.png" alt="DimGym logo" width="200">
 </p>
 
 <h1 align="center">DimGym</h1>
@@ -104,12 +104,11 @@ com.dimgym
 
 1. Clone the repo
    ```bash
-   git clone https://github.com/<your-username>/DimGym.git
+   git clone https://github.com/<your-username>/Dim-Gym.git
    ```
 2. Open it in **Android Studio**
 3. Let Gradle sync finish
-4. Add the logo at `app/src/main/res/drawable/dimgym_logo.png` (used by the splash screen)
-5. Run on a device or emulator. A real phone over USB is much smoother than the emulator
+4. Run on a device or emulator. A real phone over USB is much smoother than the emulator
 
 On Android 13 and above the app asks for notification permission when you turn the reminder on.
 
@@ -150,3 +149,6 @@ On purpose, to keep the app simple and focused:
 
 Built by **Lakshay**, a Computer Science student at Chandigarh University, as a first Android app and a tool for his own training.
 
+## License
+
+Add a license of your choice (for example MIT) before publishing.

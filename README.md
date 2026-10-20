@@ -15,6 +15,8 @@
   <img alt="Offline" src="https://img.shields.io/badge/data-100%25%20offline-FFB300">
 </p>
 
+[**Download the latest APK**](https://github.com/FireWalkerWasTaken/Dim-Gym/releases/latest)
+
 ---
 
 ## Why DimGym

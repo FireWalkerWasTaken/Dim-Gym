@@ -2,6 +2,7 @@ package com.dimgym.data // change to your own package name
 
 import android.content.Context
 import androidx.room.*
+import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
@@ -48,6 +49,7 @@ data class Settings(
     val theme: String = "dark", // "dark" | "light"
     val reminderMinutes: Int? = null, // minutes after midnight, null = reminder off
     val cyclePosition: Int = 0, // index of today's workout in the cycle (0 = first day)
+    val lastDoneAt: Long? = null, // when Done was last tapped (epoch millis); used to skip the reminder
 )
 
 /** What the Today screen shows per card. */
@@ -75,6 +77,8 @@ abstract class PlanDao {
     )
     abstract fun exercisesOf(dayId: Long): Flow<List<ExerciseRow>>
 
+    @Query("SELECT name FROM Exercise ORDER BY name") abstract fun exerciseNames(): Flow<List<String>>
+
     @Query("SELECT * FROM Settings WHERE id = 1") abstract fun settings(): Flow<Settings>
 
     @Upsert abstract suspend fun save(day: Day): Long
@@ -87,12 +91,21 @@ abstract class PlanDao {
     @Query("SELECT COUNT(*) FROM Day") abstract suspend fun dayCount(): Int
     @Query("SELECT cyclePosition FROM Settings WHERE id = 1") abstract suspend fun cycle(): Int
     @Query("UPDATE Settings SET cyclePosition = :i WHERE id = 1") abstract suspend fun setCycle(i: Int)
+    @Query("UPDATE Settings SET lastDoneAt = :t WHERE id = 1") abstract suspend fun setDoneAt(t: Long)
 
-    /** Done: move to the next workout, wrapping around at the end of the cycle. */
+    @Query("UPDATE DayExercise SET position = :pos WHERE id = :id") abstract suspend fun updatePosition(id: Long, pos: Int)
+
+    @Transaction
+    open suspend fun reorder(ids: List<Long>) {
+        ids.forEachIndexed { i, id -> updatePosition(id, i) }
+    }
+
+    /** Done: move to the next workout, wrapping around at the end of the cycle, and remember when. */
     @Transaction
     open suspend fun advance() {
         val n = dayCount()
         if (n > 0) setCycle((cycle() % n + 1) % n)
+        setDoneAt(System.currentTimeMillis())
     }
 
     // --- backup / restore ---
@@ -125,9 +138,16 @@ abstract class PlanDao {
     }
 }
 
+/** v1 -> v2: remember when Done was last tapped. Existing data is kept. */
+val MIGRATION_1_2 = object : Migration(1, 2) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE Settings ADD COLUMN lastDoneAt INTEGER")
+    }
+}
+
 @Database(
     entities = [Day::class, Exercise::class, DayExercise::class, Settings::class],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 abstract class DimGymDb : RoomDatabase() {
@@ -138,6 +158,7 @@ abstract class DimGymDb : RoomDatabase() {
 
         fun get(ctx: Context): DimGymDb = inst ?: synchronized(this) {
             inst ?: Room.databaseBuilder(ctx.applicationContext, DimGymDb::class.java, "dimgym.db")
+                .addMigrations(MIGRATION_1_2)
                 .addCallback(object : RoomDatabase.Callback() {
                     override fun onCreate(db: SupportSQLiteDatabase) {
                         db.execSQL("INSERT INTO Settings (id, unit, theme, reminderMinutes, cyclePosition) VALUES (1, 'kg', 'dark', NULL, 0)")

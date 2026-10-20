@@ -1,5 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- res/values/themes.xml
+     This colour is painted by Android before any Compose code runs.
+     It must match the splash and the app's dark background, so there is no white flash on launch. -->
 <resources>
-
-    <style name="Theme.MyApplication" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.DimGym" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#FF0D0D0F</item>
+        <item name="android:colorBackground">#FF0D0D0F</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+    </style>
 </resources>

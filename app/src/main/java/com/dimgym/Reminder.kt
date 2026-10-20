@@ -10,9 +10,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.text.format.DateUtils
 import androidx.core.app.NotificationCompat
 import com.dimgym.data.Day
 import com.dimgym.data.DimGymDb
+import com.dimgym.data.ExerciseRow
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -41,21 +43,31 @@ object Reminder {
         am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at.timeInMillis, intent(ctx))
     }
 
-    fun notify(ctx: Context, day: Day) {
+    private fun fmt(w: Double) = if (w % 1.0 == 0.0) w.toInt().toString() else w.toString()
+
+    /** "Bench Press · 3 × 10 · 60 kg" (weight part left out when the exercise has no weight). */
+    private fun line(r: ExerciseRow, unit: String) =
+        "${r.name} · ${r.sets} × ${r.reps}" + (r.weight?.let { " · ${fmt(it)} $unit" } ?: "")
+
+    fun notify(ctx: Context, day: Day, rows: List<ExerciseRow>, unit: String) {
         if (Build.VERSION.SDK_INT >= 33 &&
             ctx.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) return
         val nm = ctx.getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel(CHANNEL, "Daily workout reminder", NotificationManager.IMPORTANCE_DEFAULT))
         val open = PendingIntent.getActivity(ctx, 1, Intent(ctx, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
-        val n = NotificationCompat.Builder(ctx, CHANNEL)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+        val summary = if (rows.isEmpty()) day.name else "${day.name} · ${rows.size} exercises"
+        val b = NotificationCompat.Builder(ctx, CHANNEL)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(0xFFFFB300.toInt()) // amber accent
             .setContentTitle("Time to train")
-            .setContentText(day.name)
+            .setContentText(summary)
             .setContentIntent(open)
             .setAutoCancel(true)
-            .build()
-        nm.notify(1, n)
+        if (rows.isNotEmpty()) {
+            b.setStyle(NotificationCompat.BigTextStyle().bigText(rows.joinToString("\n") { line(it, unit) }))
+        }
+        nm.notify(1, b.build())
     }
 }
 
@@ -66,10 +78,15 @@ class ReminderReceiver : BroadcastReceiver() {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val dao = DimGymDb.get(ctx).dao()
-                val minutes = dao.settings().first().reminderMinutes ?: return@launch
+                val s = dao.settings().first()
+                val minutes = s.reminderMinutes ?: return@launch
                 if (intent.action != Intent.ACTION_BOOT_COMPLETED) {
                     val day = dao.today().first()
-                    if (day != null && !day.isRest) Reminder.notify(ctx, day) // no reminder on rest days
+                    val doneToday = s.lastDoneAt?.let { DateUtils.isToday(it) } == true
+                    // no reminder on rest days, or if you already tapped Done today
+                    if (day != null && !day.isRest && !doneToday) {
+                        Reminder.notify(ctx, day, dao.exercisesOf(day.id).first(), s.unit)
+                    }
                 }
                 Reminder.schedule(ctx, minutes)
             } finally {

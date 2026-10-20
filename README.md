@@ -104,7 +104,7 @@ com.dimgym
 
 1. Clone the repo
    ```bash
-   git clone https://github.com/<your-username>/Dim-Gym.git
+   git clone https://github.com/FireWalkerWasTaken/Dim-Gym.git
    ```
 2. Open it in **Android Studio**
 3. Let Gradle sync finish

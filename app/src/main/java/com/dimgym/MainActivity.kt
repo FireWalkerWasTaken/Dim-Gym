@@ -9,33 +9,21 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -52,12 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.layout
-import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.dimgym.data.DimGymDb
 import com.dimgym.ui.theme.DimGymTheme
 import kotlinx.coroutines.delay
@@ -76,29 +59,37 @@ class MainActivity : ComponentActivity() {
         setContent {
             val settings by remember { dao.settings() }.collectAsState(null)
             var splash by rememberSaveable { mutableStateOf(true) }
-            LaunchedEffect(Unit) {
-                delay(1200)
-                splash = false
+            // Shorter than before (was 1.5 s): the wait is pure latency, so it only covers the first build
+            LaunchedEffect(Unit) { delay(1100); splash = false }
+            val system = isSystemInDarkTheme()
+            val dark = when (settings?.theme) {
+                "light" -> false
+                "system" -> system
+                else -> true // "dark", and the moment before settings load
             }
-            val dark = settings?.theme != "light"
+            // System bar icons follow the in-app theme (and stay light over the always-dark splash)
             val barsDark = dark || splash
             DisposableEffect(barsDark) {
-                val bars = if (barsDark) {
-                    SystemBarStyle.dark(Color.TRANSPARENT)
-                } else {
-                    SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
-                }
+                val bars = if (barsDark) SystemBarStyle.dark(Color.TRANSPARENT) else SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
                 enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
                 onDispose {}
             }
             DimGymTheme(dark = dark) {
-                Box(Modifier.fillMaxSize()) {
-                    DimGymApp()
-                    AnimatedVisibility(
-                        visible = splash,
-                        exit = fadeOut(tween(350)),
-                    ) {
-                        SplashScreen()
+                CompositionLocalProvider(LocalReduceMotion provides rememberReduceMotion()) {
+                    val reduce = LocalReduceMotion.current
+                    // The app settles forward as the splash lifts: 96% to 100%, on a critically damped spring
+                    val reveal by animateFloatAsState(if (splash) 0f else 1f, motionSpec(1f, 0.6f), label = "reveal")
+                    Box(Modifier.fillMaxSize()) {
+                        DimGymApp(
+                            Modifier.graphicsLayer {
+                                val s = if (reduce) 1f else 0.96f + 0.04f * reveal
+                                scaleX = s; scaleY = s
+                            },
+                        ) // builds behind the splash, so it is ready when the splash lifts
+                        AnimatedVisibility(
+                            splash,
+                            exit = fadeOut(tween(if (reduce) 150 else 380)) + (if (reduce) scaleOut(targetScale = 1f) else scaleOut(tween(380), targetScale = 1.05f)),
+                        ) { SplashScreen() }
                     }
                 }
             }
@@ -107,136 +98,46 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun DimGymApp() {
+private fun DimGymApp(modifier: Modifier = Modifier) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var warm by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        delay(300)
-        warm = true
-    }
+    // While the splash is up, build the other tabs too so switching later costs nothing
+    LaunchedEffect(Unit) { delay(300); warm = true }
     val c = MaterialTheme.colorScheme
-    val haptic = LocalHapticFeedback.current
-
+    val items = remember { Tab.entries.map { TabItem(it.label, it.icon) } }
     val screens: List<@Composable () -> Unit> = listOf(
-        { TodayScreen(onOpenPlan = { tab = 1 }) },
+        { TodayScreen(onOpenPlan = { tab = 1; warm = true }) },
         { PlanScreen() },
         { SettingsScreen() },
     )
-
-    Scaffold(
-        containerColor = c.background,
-        bottomBar = {
-            // Apple-style Frosted Glass Tab Bar:
-            // Translucent material background, hairline top border, spring-scaled icons,
-            // single-word labels and direct haptic confirmation on touch-down.
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(c.surface.copy(alpha = 0.92f))
-                    .border(
-                        width = 0.5.dp,
-                        color = c.outlineVariant.copy(alpha = 0.45f),
-                    ),
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                        .height(52.dp),
-                    horizontalArrangement = Arrangement.SpaceAround,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Tab.entries.forEachIndexed { i, t ->
-                        val isSelected = tab == i
-                        val tabScale by animateFloatAsState(
-                            targetValue = if (isSelected) 1.05f else 1.0f,
-                            animationSpec = spring(dampingRatio = 0.7f, stiffness = 500f),
-                            label = "tabIconScale",
-                        )
-
-                        val interactionSource = remember { MutableInteractionSource() }
-
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(52.dp)
-                                .clickable(
-                                    interactionSource = interactionSource,
-                                    indication = null,
-                                    role = Role.Tab,
-                                    onClick = {
-                                        if (tab != i) {
-                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                            tab = i
-                                            warm = true
-                                        }
-                                    },
-                                ),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center,
-                        ) {
-                            Icon(
-                                imageVector = t.icon,
-                                contentDescription = t.label,
-                                tint = if (isSelected) c.primary else c.onSurfaceVariant.copy(alpha = 0.8f),
-                                modifier = Modifier
-                                    .size(24.dp)
-                                    .graphicsLayer {
-                                        scaleX = tabScale
-                                        scaleY = tabScale
-                                    },
-                            )
-                            Spacer(Modifier.height(3.dp))
-                            Text(
-                                text = t.label,
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontSize = 10.sp,
-                                    letterSpacing = 0.1.sp,
-                                ),
-                                color = if (isSelected) c.primary else c.onSurfaceVariant.copy(alpha = 0.8f),
-                            )
-                        }
-                    }
+    val barInset = TabBarContent + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    Surface(modifier.fillMaxSize(), color = c.background, contentColor = c.onBackground) {
+        Box(Modifier.fillMaxSize()) {
+            // Screens run edge to edge and scroll under the translucent tab bar; they read the inset to stay clear of it
+            CompositionLocalProvider(LocalBarInset provides barInset) {
+                screens.forEachIndexed { i, screen ->
+                    key(i) { if (i == tab || warm) KeepAlive(active = i == tab, content = screen) }
                 }
             }
-        },
-    ) { pad ->
-        Box(
-            Modifier
-                .padding(pad)
-                .consumeWindowInsets(pad)
-                .fillMaxSize(),
-        ) {
-            screens.forEachIndexed { i, screen ->
-                key(i) {
-                    if (i == tab || warm) {
-                        KeepAlive(active = i == tab, content = screen)
-                    }
-                }
-            }
+            TabBar(items, tab, onSelect = { tab = it; warm = true }, modifier = Modifier.align(Alignment.BottomCenter))
         }
     }
 }
 
 /**
  * Keeps a tab composed after its first visit, so switching never rebuilds it or reloads its data.
- * A hidden tab is neither drawn nor touchable, and the tab you switch to transitions smoothly.
+ * A hidden tab is neither drawn nor touchable, and the tab you switch to fades in.
  */
 @Composable
 private fun KeepAlive(active: Boolean, content: @Composable () -> Unit) {
     val alpha = remember { Animatable(if (active) 1f else 0f) }
-    LaunchedEffect(active) {
-        if (active) alpha.animateTo(1f, tween(180)) else alpha.snapTo(0f)
-    }
+    LaunchedEffect(active) { if (active) alpha.animateTo(1f, tween(200)) else alpha.snapTo(0f) }
     Box(
-        Modifier
-            .fillMaxSize()
+        Modifier.fillMaxSize()
             .graphicsLayer { this.alpha = alpha.value }
             .layout { m, c ->
                 val p = m.measure(c)
-                layout(p.width, p.height) {
-                    if (active) p.place(0, 0)
-                }
+                layout(p.width, p.height) { if (active) p.place(0, 0) } // not placed = not drawn, not touchable
             },
     ) {
         CompositionLocalProvider(LocalActive provides active, content = content)

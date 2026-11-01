@@ -1,12 +1,8 @@
 package com.dimgym
 
-import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
@@ -14,54 +10,41 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -72,11 +55,8 @@ import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.dimgym.data.Day
 import com.dimgym.data.DayExercise
@@ -85,240 +65,107 @@ import com.dimgym.data.ExerciseRow
 import com.dimgym.data.PlanDao
 import kotlinx.coroutines.launch
 
-/**
- * Plan tab:
- * Apple-style cycle management with Inset Grouped day cards,
- * spring-accelerated drag-to-reorder, and fluid modal sheets for adding and editing.
- */
+/** Plan tab: the list of days, or the editor for one day, which slides over the list and can be swiped back. */
 @Composable
 fun PlanScreen() {
     val dao = DimGymDb.get(LocalContext.current).dao()
-    val scope = rememberCoroutineScope()
+    val scope = rememberCoroutineScope() // outlives the editor, so a delete always finishes
     val days by remember { dao.days() }.collectAsState(null)
     val today by remember { dao.today() }.collectAsState(null)
     var open by remember { mutableStateOf<Day?>(null) }
-
-    AnimatedContent(
-        targetState = open,
-        modifier = Modifier.fillMaxSize(),
-        transitionSpec = { drill(forward = targetState != null) },
-        contentKey = { it?.id },
-        label = "planScreenTransition",
-    ) { day ->
-        if (day == null) {
-            DayList(dao, days, today?.id) { open = it }
-        } else {
-            DayEditor(
-                dao = dao,
-                day = day,
-                onBack = { open = null },
-                onDelete = {
-                    scope.launch { dao.delete(day) }
-                    open = null
-                },
-            )
-        }
-    }
+    DrillHost(
+        detail = open,
+        onPop = { open = null },
+        root = { DayList(dao, days, today?.id) { open = it } },
+        page = { day -> DayEditor(dao, day, onBack = { open = null }, onDelete = { scope.launch { dao.delete(day) }; open = null }) },
+    )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DayList(
-    dao: PlanDao,
-    days: List<Day>?,
-    todayId: Long?,
-    onOpen: (Day) -> Unit,
-) {
+private fun DayList(dao: PlanDao, days: List<Day>?, todayId: Long?, onOpen: (Day) -> Unit) {
     val scope = rememberCoroutineScope()
     var adding by remember { mutableStateOf(false) }
     val c = MaterialTheme.colorScheme
+    val barInset = LocalBarInset.current
+    val listState = rememberLazyListState()
+    val collapse = rememberCollapse(listState)
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .padding(horizontal = 20.dp, vertical = 12.dp),
-    ) {
-        Column(modifier = Modifier.padding(bottom = 12.dp)) {
-            Text("Workout Plan", style = MaterialTheme.typography.headlineLarge)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "Your routine repeats sequentially through this cycle.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = c.onSurfaceVariant,
-            )
-        }
-
-        when {
-            days == null -> Spacer(Modifier.weight(1f))
-            days.isEmpty() -> EmptyState(
-                title = "No Workout Days",
-                body = "A cycle is your structured schedule of lifting days and rest days. Begin by creating your first day.",
-                action = "Add Day",
-                onAction = { adding = true },
-                modifier = Modifier.weight(1f),
-            )
-
-            else -> {
-                LazyColumn(
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(vertical = 4.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    itemsIndexed(days, key = { _, d -> d.id }) { i, d ->
-                        val isToday = d.id == todayId
-                        AppCard(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .animateItem(),
-                            shape = RoundedCornerShape(18.dp),
-                            onClick = { onOpen(d) },
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 18.dp, vertical = 16.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    text = String.format("%02d", i + 1),
-                                    color = if (isToday) c.primary else c.onSurfaceVariant.copy(alpha = 0.6f),
-                                    style = MaterialTheme.typography.titleMedium.copy(
-                                        fontWeight = FontWeight.Bold,
-                                        fontFeatureSettings = "tnum",
-                                    ),
-                                    modifier = Modifier.width(32.dp),
-                                )
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = d.name,
-                                        style = MaterialTheme.typography.titleLarge.copy(
-                                            fontWeight = if (isToday) FontWeight.Bold else FontWeight.SemiBold,
-                                        ),
-                                    )
-                                    if (d.isRest) {
-                                        Text(
-                                            text = "Rest & Recovery",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = c.onSurfaceVariant,
-                                        )
-                                    }
-                                }
-                                if (isToday) {
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .background(c.primaryContainer)
-                                            .padding(horizontal = 10.dp, vertical = 4.dp),
-                                    ) {
-                                        Text(
-                                            text = "TODAY",
-                                            color = c.onPrimaryContainer,
-                                            style = MaterialTheme.typography.labelSmall.copy(
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 11.sp,
-                                            ),
-                                        )
-                                    }
-                                }
+    Box(Modifier.fillMaxSize()) {
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            state = listState,
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = navBarHeight(), bottom = barInset + ButtonZone),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            item(key = "header") { LargeTitle("Plan", subtitle = "Your cycle repeats in this order.") }
+            when {
+                days == null -> Unit
+                days.isEmpty() -> item(key = "empty") {
+                    EmptyState(
+                        "No days yet", "A cycle is the list of workouts you repeat. Start with your first day.",
+                        "Add day", { adding = true }, Modifier.padding(top = 48.dp),
+                    )
+                }
+                else -> itemsIndexed(days, key = { _, d -> d.id }) { i, d ->
+                    AppCard(Modifier.fillMaxWidth().animateItem(), onClick = { onOpen(d) }) {
+                        Row(Modifier.heightIn(min = 64.dp).padding(start = 18.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "${i + 1}", color = c.onSurfaceVariant, modifier = Modifier.width(28.dp),
+                                style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
+                            )
+                            Column(Modifier.weight(1f).padding(vertical = 12.dp)) {
+                                Text(d.name, style = MaterialTheme.typography.titleLarge)
+                                if (d.isRest) Text("Rest day", color = c.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
                             }
+                            if (d.id == todayId) {
+                                Text(
+                                    "Today", color = c.onPrimaryContainer, style = MaterialTheme.typography.labelSmall,
+                                    modifier = Modifier.background(c.primaryContainer, MaterialTheme.shapes.extraSmall)
+                                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                                )
+                            }
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = c.onSurfaceVariant)
                         }
                     }
                 }
-
-                Spacer(Modifier.height(10.dp))
-                PrimaryButton("Add Day", { adding = true })
             }
         }
+        if (!days.isNullOrEmpty()) {
+            BottomFade(Modifier.align(Alignment.BottomCenter).padding(bottom = barInset))
+            PrimaryButton("Add day", { adding = true }, Modifier.align(Alignment.BottomCenter).padding(horizontal = 20.dp).padding(bottom = barInset + 12.dp))
+        }
+        NavBar(title = "Plan", collapse = { collapse.value })
     }
 
     if (adding) {
         var name by remember { mutableStateOf("") }
         var rest by remember { mutableStateOf(false) }
-
-        AppleModalSheet(onDismissRequest = { adding = false }) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .imePadding()
-                    .padding(horizontal = 24.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                Text(
-                    text = "New Workout Day",
-                    style = MaterialTheme.typography.headlineSmall,
-                )
-
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Day Name (e.g., Push A, Legs, Pull)") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = c.primary,
-                        unfocusedBorderColor = c.outlineVariant.copy(alpha = 0.5f),
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .autoFocus(),
-                )
-
-                InsetGroupedSection {
-                    InsetRow {
-                        Column {
-                            Text("Rest Day", style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                "Recovery day without active exercise logging",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = c.onSurfaceVariant,
-                            )
-                        }
-                        Switch(
-                            checked = rest,
-                            onCheckedChange = { rest = it },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color.White,
-                                checkedTrackColor = c.primary,
-                            ),
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(4.dp))
-
-                PrimaryButton(
-                    text = "Add to Cycle",
-                    enabled = name.isNotBlank(),
-                    onClick = {
-                        scope.launch {
-                            dao.save(
-                                Day(
-                                    name = name.trim(),
-                                    position = (days?.maxOfOrNull { it.position } ?: -1) + 1,
-                                    isRest = rest,
-                                ),
-                            )
-                        }
-                        adding = false
-                    },
-                )
-                Spacer(Modifier.height(12.dp))
+        AppSheet(
+            title = "Add day", confirmLabel = "Add", confirmEnabled = name.isNotBlank(),
+            onConfirm = {
+                scope.launch { dao.save(Day(name = name.trim(), position = (days?.maxOfOrNull { it.position } ?: -1) + 1, isRest = rest)) }
+            },
+            onDismiss = { adding = false },
+        ) {
+            OutlinedTextField(
+                name, { name = it }, label = { Text("Name, e.g. Push A") }, singleLine = true,
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
+                colors = appFieldColors(),
+                modifier = Modifier.fillMaxWidth().autoFocus(),
+            )
+            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Rest day", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                AppSwitch(rest, { rest = it })
             }
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** Header is the only item before the exercises; the drag code below shifts list indices by this. */
+private const val HEAD = 1
+
 @Composable
-private fun DayEditor(
-    dao: PlanDao,
-    day: Day,
-    onBack: () -> Unit,
-    onDelete: () -> Unit,
-) {
-    BackHandler(enabled = LocalActive.current, onBack = onBack)
+private fun DayEditor(dao: PlanDao, day: Day, onBack: () -> Unit, onDelete: () -> Unit) {
     val scope = rememberCoroutineScope()
     val rows by remember(day.id) { dao.exercisesOf(day.id) }.collectAsState(null)
     val names by remember { dao.exerciseNames() }.collectAsState(emptyList())
@@ -332,12 +179,18 @@ private fun DayEditor(
 
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
+    val barInset = LocalBarInset.current
+    val topPad = navBarHeight()
     val listState = rememberLazyListState()
+    val collapse = rememberCollapse(listState)
+    val cardShape = MaterialTheme.shapes.medium
+    // While a drag is on, the list shows this working order; otherwise it shows the database order
     var shown by remember { mutableStateOf(emptyList<ExerciseRow>()) }
     var draggingId by remember { mutableStateOf<Long?>(null) }
     var dragOffset by remember { mutableFloatStateOf(0f) }
     val list = (if (draggingId != null) shown else loaded).orEmpty()
 
+    /** Accessibility route (and tests): moves one exercise up (-1) or down (+1) without dragging. */
     fun move(id: Long, by: Int) {
         val cur = rows ?: return
         val from = cur.indexOfFirst { it.dayExerciseId == id }
@@ -345,6 +198,15 @@ private fun DayEditor(
         if (from < 0 || to !in cur.indices) return
         val ids = cur.map { it.dayExerciseId }.toMutableList().apply { add(to, removeAt(from)) }
         scope.launch { dao.reorder(ids) }
+    }
+
+    fun remove(r: ExerciseRow, index: Int) {
+        val item = DayExercise(r.dayExerciseId, day.id, r.exerciseId, index, r.sets, r.reps)
+        scope.launch {
+            dao.delete(item)
+            snack.currentSnackbarData?.dismiss()
+            if (snack.showSnackbar("Removed ${r.name}", actionLabel = "Undo") == SnackbarResult.ActionPerformed) dao.save(item)
+        }
     }
 
     fun dragStart(id: Long) {
@@ -361,21 +223,28 @@ private fun DayEditor(
         dragOffset += dy
         val info = listState.layoutInfo
         val cur = info.visibleItemsInfo.firstOrNull { it.key == id } ?: return
-        if (shown.indexOfFirst { it.dayExerciseId == id } != cur.index) return
+        // After a swap, wait for the list to lay it out before looking for the next one
+        if (shown.indexOfFirst { it.dayExerciseId == id } != cur.index - HEAD) return
         val center = cur.offset + dragOffset + cur.size / 2f
-        val target = info.visibleItemsInfo.firstOrNull { it.key != id && center >= it.offset && center <= it.offset + it.size }
-        if (target != null) {
-            val gap = with(density) { 10.dp.toPx() }
-            val newOffset = if (target.index > cur.index) cur.offset + target.size + gap else target.offset.toFloat()
-            dragOffset += cur.offset - newOffset
-            shown = shown.toMutableList().apply { add(target.index, removeAt(cur.index)) }
+        val target = info.visibleItemsInfo.firstOrNull {
+            it.key != id && it.key is Long && center >= it.offset && center <= it.offset + it.size
         }
-        val edge = with(density) { 64.dp.toPx() }
+        if (target != null) {
+            val gap = with(density) { 10.dp.toPx() } // the list's item spacing
+            val newOffset = if (target.index > cur.index) cur.offset + target.size + gap else target.offset.toFloat()
+            dragOffset += cur.offset - newOffset // keep the card under the finger after it changes slot
+            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            shown = shown.toMutableList().apply { add(target.index - HEAD, removeAt(cur.index - HEAD)) }
+        }
+        // Near the bar above or the button below: scroll the list and keep the card under the finger
+        val edge = with(density) { 56.dp.toPx() }
         val step = with(density) { 14.dp.toPx() }
+        val topLimit = info.viewportStartOffset + edge
+        val bottomLimit = info.viewportEndOffset - with(density) { (barInset + ButtonZone).toPx() } - edge
         val top = cur.offset + dragOffset
         val push = when {
-            top < info.viewportStartOffset + edge -> -step
-            top + cur.size > info.viewportEndOffset - edge -> step
+            top < topLimit -> -step
+            top + cur.size > bottomLimit -> step
             else -> 0f
         }
         if (push != 0f) scope.launch { dragOffset += listState.scrollBy(push) }
@@ -386,198 +255,95 @@ private fun DayEditor(
         val ids = shown.map { it.dayExerciseId }
         scope.launch {
             if (ids != rows?.map { it.dayExerciseId }) dao.reorder(ids)
-            animate(dragOffset, 0f, animationSpec = spring(dampingRatio = 0.8f, stiffness = 600f)) { v, _ ->
-                dragOffset = v
-            }
+            // Settle into the slot on a spring that starts from wherever the card is
+            animate(dragOffset, 0f, animationSpec = appleSpring(1f, 0.3f)) { v, _ -> dragOffset = v }
             draggingId = null
         }
     }
 
     Box(Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-                .padding(horizontal = 20.dp, vertical = 12.dp),
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            state = listState,
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = topPad, bottom = barInset + ButtonZone),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            // Header Bar
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(
-                    onClick = onBack,
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(c.surfaceContainerHighest.copy(alpha = 0.6f))
-                        .pressScale(),
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = c.onSurface)
-                }
-                Spacer(Modifier.width(12.dp))
-                Text(
-                    text = day.name,
-                    style = MaterialTheme.typography.headlineMedium,
-                    modifier = Modifier.weight(1f),
-                )
-                IconButton(
-                    onClick = { confirmDelete = true },
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(c.error.copy(alpha = 0.12f))
-                        .pressScale(),
-                ) {
-                    Icon(Icons.Default.Delete, contentDescription = "Delete day", tint = c.error)
-                }
-            }
-
-            if (!day.isRest && !loaded.isNullOrEmpty()) {
-                Text(
-                    text = "Hold & drag handle to reorder • Tap card to edit sets & reps",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = c.onSurfaceVariant,
-                    modifier = Modifier.padding(bottom = 10.dp),
+            item(key = "header") {
+                LargeTitle(
+                    day.name,
+                    subtitle = when {
+                        day.isRest -> "Rest day. Nothing to add here."
+                        loaded.isNullOrEmpty() -> null
+                        else -> "Drag the handle to reorder. Swipe left to remove."
+                    },
                 )
             }
-
             when {
-                day.isRest -> Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = "Rest day — No exercises are assigned to this session.",
-                        color = c.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodyMedium,
+                day.isRest || loaded == null -> Unit
+                loaded.isEmpty() -> item(key = "empty") {
+                    EmptyState(
+                        "No exercises yet", "Add what you do on this day. Each exercise remembers its weight.",
+                        "Add exercise", { adding = true }, Modifier.padding(top = 32.dp),
                     )
                 }
-
-                loaded == null -> Spacer(Modifier.weight(1f))
-                loaded.isEmpty() -> EmptyState(
-                    title = "No Exercises Added",
-                    body = "Add the movements and lifts you do on this day. Weights and notes will be saved.",
-                    action = "Add Exercise",
-                    onAction = { adding = true },
-                    modifier = Modifier.weight(1f),
-                )
-
-                else -> {
-                    LazyColumn(
-                        modifier = Modifier.weight(1f),
-                        state = listState,
-                        contentPadding = PaddingValues(vertical = 4.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                else -> itemsIndexed(list, key = { _, r -> r.dayExerciseId }) { i, r ->
+                    val dragging = r.dayExerciseId == draggingId
+                    val lift by animateFloatAsState(if (dragging) 1f else 0f, motionSpec(1f, 0.3f), label = "lift")
+                    val shadow = with(density) { 14.dp.toPx() }
+                    SwipeToRemove(
+                        onRemove = { remove(r, i) },
+                        modifier = Modifier.fillMaxWidth()
+                            .then(if (dragging) Modifier.zIndex(1f) else Modifier.animateItem()) // the dragged card follows the finger, the rest glide
+                            .graphicsLayer {
+                                if (dragging) translationY = dragOffset
+                                val s = 1f + 0.03f * lift
+                                scaleX = s; scaleY = s
+                                shadowElevation = shadow * lift
+                                shape = cardShape
+                            },
                     ) {
-                        itemsIndexed(list, key = { _, r -> r.dayExerciseId }) { i, r ->
-                            val dragging = r.dayExerciseId == draggingId
-                            val lift by animateFloatAsState(
-                                targetValue = if (dragging) 1.03f else 1f,
-                                animationSpec = spring(dampingRatio = 0.75f, stiffness = 600f),
-                                label = "liftAnimation",
-                            )
-
-                            AppCard(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .then(if (dragging) Modifier.zIndex(2f) else Modifier.animateItem())
-                                    .graphicsLayer {
-                                        if (dragging) translationY = dragOffset
-                                        scaleX = lift
-                                        scaleY = lift
+                        AppCard(Modifier.fillMaxWidth(), onClick = { editing = r.dayExerciseId }) {
+                            Row(Modifier.heightIn(min = 64.dp).padding(start = 4.dp, end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                DragHandle(
+                                    r.name, onMove = { move(r.dayExerciseId, it) },
+                                    modifier = Modifier.pointerInput(r.dayExerciseId) {
+                                        detectVerticalDragGestures(
+                                            onDragStart = { dragStart(r.dayExerciseId) },
+                                            onDragEnd = { dragEnd(r.dayExerciseId) },
+                                            onDragCancel = { dragEnd(r.dayExerciseId) },
+                                            onVerticalDrag = { change, dy -> change.consume(); dragBy(r.dayExerciseId, dy) },
+                                        )
                                     },
-                                shape = RoundedCornerShape(16.dp),
-                                onClick = { editing = r.dayExerciseId },
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 8.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    // Apple HIG style reorder grip
-                                    DragHandle(
-                                        name = r.name,
-                                        onMove = { move(r.dayExerciseId, it) },
-                                        modifier = Modifier.pointerInput(r.dayExerciseId) {
-                                            detectVerticalDragGestures(
-                                                onDragStart = { dragStart(r.dayExerciseId) },
-                                                onDragEnd = { dragEnd(r.dayExerciseId) },
-                                                onDragCancel = { dragEnd(r.dayExerciseId) },
-                                                onVerticalDrag = { change, dy ->
-                                                    change.consume()
-                                                    dragBy(r.dayExerciseId, dy)
-                                                },
-                                            )
-                                        },
-                                    )
-
-                                    Column(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .padding(start = 6.dp),
-                                    ) {
-                                        Text(r.name, style = MaterialTheme.typography.titleMedium)
-                                        Spacer(Modifier.height(2.dp))
-                                        Text(
-                                            "${r.sets} sets × ${r.reps} reps",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = c.onSurfaceVariant,
-                                        )
-                                    }
-
-                                    IconButton(
-                                        onClick = {
-                                            val item = DayExercise(r.dayExerciseId, day.id, r.exerciseId, i, r.sets, r.reps)
-                                            scope.launch {
-                                                dao.delete(item)
-                                                snack.currentSnackbarData?.dismiss()
-                                                if (snack.showSnackbar("Removed ${r.name}", actionLabel = "Undo") == SnackbarResult.ActionPerformed) {
-                                                    dao.save(item)
-                                                }
-                                            }
-                                        },
-                                        modifier = Modifier.pressScale(),
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Delete,
-                                            contentDescription = "Remove ${r.name}",
-                                            tint = c.onSurfaceVariant.copy(alpha = 0.6f),
-                                            modifier = Modifier.size(20.dp),
-                                        )
-                                    }
+                                )
+                                Column(Modifier.weight(1f).padding(start = 4.dp, top = 12.dp, bottom = 12.dp)) {
+                                    Text(r.name, style = MaterialTheme.typography.titleMedium)
+                                    Text("${r.sets} × ${r.reps}", color = c.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
                                 }
+                                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = c.onSurfaceVariant)
                             }
                         }
                     }
-
-                    Spacer(Modifier.height(10.dp))
-                    PrimaryButton("Add Exercise", { adding = true })
                 }
             }
         }
-
-        SnackbarHost(
-            hostState = snack,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 16.dp),
+        if (!day.isRest && !loaded.isNullOrEmpty()) {
+            BottomFade(Modifier.align(Alignment.BottomCenter).padding(bottom = barInset))
+            PrimaryButton("Add exercise", { adding = true }, Modifier.align(Alignment.BottomCenter).padding(horizontal = 20.dp).padding(bottom = barInset + 12.dp))
+        }
+        NavBar(
+            title = day.name,
+            collapse = { collapse.value },
+            leading = { BackButton("Plan", onBack) },
+            trailing = { NavIconButton(Icons.Default.Delete, "Delete day") { confirmDelete = true } },
         )
+        UndoHost(snack, Modifier.align(Alignment.BottomCenter).padding(bottom = barInset + ButtonZone))
     }
 
     if (editRow != null) {
         val idx = loaded?.indexOfFirst { it.dayExerciseId == editRow.dayExerciseId } ?: 0
         EditExerciseSheet(
-            editRow = editRow,
-            onSave = { s, p ->
-                scope.launch { dao.save(DayExercise(editRow.dayExerciseId, day.id, editRow.exerciseId, idx, s, p)) }
-                editing = null
-            },
+            editRow,
+            onSave = { s, p -> scope.launch { dao.save(DayExercise(editRow.dayExerciseId, day.id, editRow.exerciseId, idx, s, p)) } },
             onDismiss = { editing = null },
         )
     }
@@ -585,226 +351,80 @@ private fun DayEditor(
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
-            shape = RoundedCornerShape(20.dp),
             title = { Text("Delete ${day.name}?") },
-            text = { Text("This workout will be removed from your cycle. Saved exercise weights and notes will be preserved.") },
+            text = { Text("It leaves your cycle and its exercise list is removed. Your weights and notes are kept.") },
             confirmButton = {
-                TextButton(onClick = {
-                    confirmDelete = false
-                    onDelete()
-                }) {
-                    Text("Delete", color = c.error, fontWeight = FontWeight.Bold)
-                }
+                TextButton({ confirmDelete = false; onDelete() }) { Text("Delete", color = c.error) }
             },
-            dismissButton = {
-                TextButton(onClick = { confirmDelete = false }) {
-                    Text("Cancel")
-                }
-            },
+            dismissButton = { TextButton({ confirmDelete = false }) { Text("Cancel") } },
         )
     }
 
     if (adding) {
         var name by remember { mutableStateOf("") }
-        var sets by remember { mutableStateOf("3") }
-        var reps by remember { mutableStateOf("10") }
-        val numbers = KeyboardOptions(keyboardType = KeyboardType.Number)
+        var sets by remember { mutableIntStateOf(3) }
+        var reps by remember { mutableIntStateOf(10) }
         val typed = name.trim()
+        // Existing exercises matching what is typed: picking one keeps its weight shared
         val hits = names.filter { it.contains(typed, ignoreCase = true) && !it.equals(typed, ignoreCase = true) }.take(6)
-
-        AppleModalSheet(onDismissRequest = { adding = false }) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .imePadding()
-                    .padding(horizontal = 24.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                Text("Add Exercise", style = MaterialTheme.typography.headlineSmall)
-
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Exercise Name") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = c.primary,
-                        unfocusedBorderColor = c.outlineVariant.copy(alpha = 0.5f),
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .autoFocus(),
-                )
-
-                if (hits.isNotEmpty()) {
-                    Text(
-                        "Previously Used Exercises",
-                        color = c.onSurfaceVariant,
-                        style = MaterialTheme.typography.labelSmall,
-                    )
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(hits) { h ->
-                            FilterChip(
-                                selected = false,
-                                onClick = { name = h },
-                                label = { Text(h, style = MaterialTheme.typography.bodySmall) },
-                                shape = RoundedCornerShape(16.dp),
-                                colors = FilterChipDefaults.filterChipColors(
-                                    containerColor = c.surfaceContainerHighest.copy(alpha = 0.6f),
-                                ),
-                            )
-                        }
-                    }
+        AppSheet(
+            title = "Add exercise", confirmLabel = "Add", confirmEnabled = name.isNotBlank(),
+            onConfirm = {
+                scope.launch {
+                    val id = dao.exerciseId(name) // reuses an existing exercise, so its weight stays shared
+                    dao.save(DayExercise(dayId = day.id, exerciseId = id, position = loaded?.size ?: 0, sets = sets, reps = reps))
                 }
-
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedTextField(
-                        value = sets,
-                        onValueChange = { sets = it.filter(Char::isDigit).take(2) },
-                        label = { Text("Sets") },
-                        singleLine = true,
-                        keyboardOptions = numbers,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.weight(1f),
-                    )
-                    OutlinedTextField(
-                        value = reps,
-                        onValueChange = { reps = it.filter(Char::isDigit).take(3) },
-                        label = { Text("Reps") },
-                        singleLine = true,
-                        keyboardOptions = numbers,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.weight(1f),
-                    )
+            },
+            onDismiss = { adding = false },
+        ) {
+            OutlinedTextField(
+                name, { name = it }, label = { Text("Exercise") }, singleLine = true,
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
+                colors = appFieldColors(),
+                modifier = Modifier.fillMaxWidth().autoFocus(),
+            )
+            if (hits.isNotEmpty()) {
+                Text("Use an existing exercise", color = c.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(hits) { h -> Chip(h) { name = h } }
                 }
-
-                Spacer(Modifier.height(4.dp))
-
-                val s = sets.toIntOrNull() ?: 0
-                val r = reps.toIntOrNull() ?: 0
-
-                PrimaryButton(
-                    text = "Add to Day",
-                    enabled = name.isNotBlank() && s > 0 && r > 0,
-                    onClick = {
-                        scope.launch {
-                            val id = dao.exerciseId(name)
-                            dao.save(
-                                DayExercise(
-                                    dayId = day.id,
-                                    exerciseId = id,
-                                    position = loaded?.size ?: 0,
-                                    sets = s,
-                                    reps = r,
-                                ),
-                            )
-                        }
-                        adding = false
-                    },
-                )
-                Spacer(Modifier.height(12.dp))
             }
+            StepperRow("Sets", sets, { sets = it }, 1..99)
+            StepperRow("Reps", reps, { reps = it }, 1..999)
         }
     }
 }
 
-/**
- * Apple-style Reorder Grip Handle:
- * Three delicate bars with tactile responsiveness and accessibility actions.
- */
+/** Three lines on the left of a card: press and drag to reorder. Screen readers get Move up / Move down instead. */
 @Composable
 private fun DragHandle(name: String, onMove: (Int) -> Unit, modifier: Modifier = Modifier) {
     val c = MaterialTheme.colorScheme
     Box(
-        modifier = modifier
-            .size(44.dp)
-            .semantics {
-                contentDescription = "Reorder $name"
-                customActions = listOf(
-                    CustomAccessibilityAction("Move up") {
-                        onMove(-1)
-                        true
-                    },
-                    CustomAccessibilityAction("Move down") {
-                        onMove(1)
-                        true
-                    },
-                )
-            },
+        modifier.size(48.dp).semantics {
+            contentDescription = "Reorder $name"
+            customActions = listOf(
+                CustomAccessibilityAction("Move up") { onMove(-1); true },
+                CustomAccessibilityAction("Move down") { onMove(1); true },
+            )
+        },
         contentAlignment = Alignment.Center,
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(3.5.dp)) {
-            repeat(3) {
-                Box(
-                    Modifier
-                        .size(18.dp, 2.dp)
-                        .background(c.onSurfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(1.dp)),
-                )
-            }
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            repeat(3) { Box(Modifier.size(18.dp, 2.dp).background(c.onSurfaceVariant, RoundedCornerShape(1.dp))) }
         }
     }
 }
 
-/**
- * Edit Exercise Sets & Reps Modal Bottom Sheet.
- */
-@OptIn(ExperimentalMaterial3Api::class)
+/** Tap an exercise: change its sets and reps with the steppers. */
 @Composable
-private fun EditExerciseSheet(
-    editRow: ExerciseRow,
-    onSave: (Int, Int) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var sets by remember(editRow.dayExerciseId) { mutableStateOf(editRow.sets.toString()) }
-    var reps by remember(editRow.dayExerciseId) { mutableStateOf(editRow.reps.toString()) }
-    val s = sets.toIntOrNull() ?: 0
-    val p = reps.toIntOrNull() ?: 0
-    val numbers = KeyboardOptions(keyboardType = KeyboardType.Number)
-
-    AppleModalSheet(onDismissRequest = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .imePadding()
-                .padding(horizontal = 24.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Text(
-                text = "Edit ${editRow.name}",
-                style = MaterialTheme.typography.headlineSmall,
-            )
-
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(
-                    value = sets,
-                    onValueChange = { sets = it.filter(Char::isDigit).take(2) },
-                    label = { Text("Target Sets") },
-                    singleLine = true,
-                    keyboardOptions = numbers,
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.weight(1f),
-                )
-                OutlinedTextField(
-                    value = reps,
-                    onValueChange = { reps = it.filter(Char::isDigit).take(3) },
-                    label = { Text("Target Reps") },
-                    singleLine = true,
-                    keyboardOptions = numbers,
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.weight(1f),
-                )
-            }
-
-            Spacer(Modifier.height(4.dp))
-
-            PrimaryButton(
-                text = "Save Changes",
-                enabled = s > 0 && p > 0,
-                onClick = { onSave(s, p) },
-            )
-            Spacer(Modifier.height(12.dp))
-        }
+private fun EditExerciseSheet(r: ExerciseRow, onSave: (Int, Int) -> Unit, onDismiss: () -> Unit) {
+    var sets by remember(r.dayExerciseId) { mutableIntStateOf(r.sets) }
+    var reps by remember(r.dayExerciseId) { mutableIntStateOf(r.reps) }
+    AppSheet(
+        title = r.name, confirmLabel = "Save", confirmEnabled = true,
+        onConfirm = { onSave(sets, reps) }, onDismiss = onDismiss,
+    ) {
+        StepperRow("Sets", sets, { sets = it }, 1..99)
+        StepperRow("Reps", reps, { reps = it }, 1..999)
     }
 }

@@ -1,7 +1,6 @@
 package com.dimgym
 
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -21,52 +20,36 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/**
- * Opening screen:
- * Premium dark background with fluid spring physics on the logo entrance.
- */
+/** Opening screen. Always dark (it is the brand), whatever theme the app uses. Add res/drawable/dimgym_logo.png. */
 @Composable
 fun SplashScreen() {
     val t = remember { Animatable(0f) }
-    LaunchedEffect(Unit) {
-        t.animateTo(1f, spring(dampingRatio = 0.85f, stiffness = 300f))
-    }
-
+    val spec = motionSpec<Float>(1f, 0.7f) // critically damped: the logo settles, it does not bounce
+    LaunchedEffect(Unit) { t.animateTo(1f, spec) }
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF0D0D0F))
-            .pointerInput(Unit) {},
+        Modifier.fillMaxSize().background(Color(0xFF0D0D0F)).pointerInput(Unit) {}, // swallows taps while it lifts
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Image(
-                painter = painterResource(R.drawable.dimgym_logo),
-                contentDescription = "DimGym",
-                modifier = Modifier
-                    .size(220.dp)
-                    .graphicsLayer {
-                        alpha = t.value
-                        scaleX = 0.88f + 0.12f * t.value
-                        scaleY = 0.88f + 0.12f * t.value
-                    },
+                painterResource(R.drawable.dimgym_logo), contentDescription = "DimGym",
+                modifier = Modifier.size(240.dp).graphicsLayer {
+                    alpha = t.value.coerceIn(0f, 1f)
+                    scaleX = 0.88f + 0.12f * t.value
+                    scaleY = 0.88f + 0.12f * t.value
+                },
             )
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(8.dp))
             Text(
-                text = "DIMGYM",
-                color = Color(0xFFECE7DF),
-                style = MaterialTheme.typography.titleMedium.copy(
-                    letterSpacing = 6.sp,
-                    fontWeight = FontWeight.Bold,
-                ),
+                "DIMGYM", color = Color(0xFFECE7DF),
+                style = MaterialTheme.typography.titleMedium.copy(letterSpacing = 6.sp),
                 modifier = Modifier.graphicsLayer {
-                    val w = ((t.value - 0.3f) / 0.7f).coerceIn(0f, 1f)
+                    val w = ((t.value - 0.4f) / 0.6f).coerceIn(0f, 1f) // starts at 40% of the logo's settle
                     alpha = w
-                    translationY = (1f - w) * 12f
+                    translationY = (1f - w) * 16f
                 },
             )
         }

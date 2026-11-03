@@ -85,6 +85,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -350,36 +351,58 @@ fun AppSheet(
  * when pulled the wrong way, and on release lands where its velocity is heading, continuing at that
  * velocity. Grab it mid-settle and it follows the finger from where it is. Screen readers get a "Remove" action.
  */
+// add to imports: import kotlinx.coroutines.CoroutineStart
+
 @Composable
-fun SwipeToRemove(onRemove: () -> Unit, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+// imports: kotlinx.coroutines.CoroutineStart (LaunchedEffect is already imported)
+
+/** Swipe left to reveal a Delete button (stops there, no full-swipe delete). Closed from outside by setting [open] to false. */
+fun SwipeToRemove(
+    open: Boolean, onOpenChange: (Boolean) -> Unit, onRemove: () -> Unit,
+    modifier: Modifier = Modifier, content: @Composable () -> Unit,
+) {
     val c = MaterialTheme.colorScheme
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     val offset = remember { Animatable(0f) }
     var raw by remember { mutableFloatStateOf(0f) }
-    var widthPx by remember { mutableFloatStateOf(1f) }
     val actionPx = with(density) { 96.dp.toPx() }
     val spec = motionSpec<Float>(1f, 0.34f)
-    val isOpen = offset.targetValue < 0f
     val shape = MaterialTheme.shapes.medium
 
+    // Closed from outside (another row opened, or the list scrolled): slide back
+    LaunchedEffect(open) { if (!open) offset.animateTo(0f, spec) }
+
     val drag = rememberDraggableState { dx ->
-        raw = (raw + dx).coerceAtLeast(-widthPx)
-        val shown = if (raw > 0f) rubberband(raw, 160f) else raw
-        scope.launch { offset.snapTo(shown) }
+        raw += dx
+        val shown = when {
+            raw > 0f -> rubberband(raw, 160f)                                   // wrong way: resists
+            raw < -actionPx -> -(actionPx + rubberband(-raw - actionPx, 160f))  // past the button: resists
+            else -> raw
+        }
+        scope.launch(start = CoroutineStart.UNDISPATCHED) { offset.snapTo(shown) }
     }
 
-    Box(modifier.onSizeChanged { widthPx = it.width.toFloat() }) {
-        // The action sits behind the row and only shows once the row has moved
+    fun settle(v: Float) {
+        scope.launch {
+            if (offset.value + project(v, 0.99f) < -actionPx * 0.5f) {
+                onOpenChange(true)
+                offset.animateTo(-actionPx, spec, initialVelocity = v)
+            } else {
+                offset.animateTo(0f, spec, initialVelocity = v)
+                onOpenChange(false)
+            }
+        }
+    }
+
+    Box(modifier) {
         Box(
             Modifier.matchParentSize().graphicsLayer { alpha = (-offset.value / 16f).coerceIn(0f, 1f) }
                 .clip(shape).background(c.error)
                 .clickable(role = Role.Button) {
-                    scope.launch {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        offset.animateTo(-widthPx, spec); onRemove()
-                    }
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onRemove() // instant: the list's own item animation fades the row out
                 },
             contentAlignment = Alignment.CenterEnd,
         ) {
@@ -394,34 +417,22 @@ fun SwipeToRemove(onRemove: () -> Unit, modifier: Modifier = Modifier, content: 
                 .draggable(
                     orientation = Orientation.Horizontal,
                     state = drag,
-                    onDragStarted = { offset.stop(); raw = offset.value }, // grab it wherever it is
-                    onDragStopped = { v ->
-                        val landing = offset.value + project(v, 0.99f)
-                        when {
-                            offset.value < -widthPx * 0.6f || landing < -widthPx * 0.55f -> {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                offset.animateTo(-widthPx, spec, initialVelocity = v)
-                                onRemove()
-                            }
-                            landing < -actionPx * 0.5f -> offset.animateTo(-actionPx, spec, initialVelocity = v)
-                            else -> offset.animateTo(0f, spec, initialVelocity = v)
-                        }
-                    },
+                    onDragStarted = { offset.stop(); raw = offset.value },
+                    onDragStopped = { v -> settle(v) },
                 ),
         ) {
             content()
             // While open, a tap anywhere on the row closes it instead of opening the row
-            if (isOpen) {
+            if (open) {
                 Box(
                     Modifier.matchParentSize().pointerInput(Unit) {
-                        detectTapGestures { scope.launch { offset.animateTo(0f, spec) } }
+                        detectTapGestures { onOpenChange(false) }
                     },
                 )
             }
         }
     }
 }
-
 // ---------------------------------------------------------------------------------------------
 // Small pieces
 // ---------------------------------------------------------------------------------------------

@@ -3,7 +3,9 @@ package com.dimgym
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,19 +37,23 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -73,11 +79,16 @@ fun PlanScreen() {
     val days by remember { dao.days() }.collectAsState(null)
     val today by remember { dao.today() }.collectAsState(null)
     var open by remember { mutableStateOf<Day?>(null) }
+    // Warm cache: every day's exercises stay loaded (and live) before you tap into one
+    val cache = remember { mutableStateMapOf<Long, List<ExerciseRow>>() }
+    LaunchedEffect(days) { days?.forEach { d -> launch { dao.exercisesOf(d.id).collect { cache[d.id] = it } } } }
     DrillHost(
         detail = open,
         onPop = { open = null },
         root = { DayList(dao, days, today?.id) { open = it } },
-        page = { day -> DayEditor(dao, day, onBack = { open = null }, onDelete = { scope.launch { dao.delete(day) }; open = null }) },
+        page = { day ->
+            DayEditor(dao, day, cache[day.id], onBack = { open = null }, onDelete = { scope.launch { dao.delete(day) }; open = null })
+        },
     )
 }
 
@@ -165,10 +176,8 @@ private fun DayList(dao: PlanDao, days: List<Day>?, todayId: Long?, onOpen: (Day
 private const val HEAD = 1
 
 @Composable
-private fun DayEditor(dao: PlanDao, day: Day, onBack: () -> Unit, onDelete: () -> Unit) {
+private fun DayEditor(dao: PlanDao, day: Day, rows: List<ExerciseRow>?, onBack: () -> Unit, onDelete: () -> Unit) {
     val scope = rememberCoroutineScope()
-    val rows by remember(day.id) { dao.exercisesOf(day.id) }.collectAsState(null)
-    val names by remember { dao.exerciseNames() }.collectAsState(emptyList())
     val snack = remember { SnackbarHostState() }
     var adding by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -184,6 +193,9 @@ private fun DayEditor(dao: PlanDao, day: Day, onBack: () -> Unit, onDelete: () -
     val listState = rememberLazyListState()
     val collapse = rememberCollapse(listState)
     val cardShape = MaterialTheme.shapes.medium
+    val latest by rememberUpdatedState(rows) // the long-lived drag gesture must not hold a stale list
+    var openId by remember { mutableStateOf<Long?>(null) } // the one row showing its Delete button
+    LaunchedEffect(listState.isScrollInProgress) { if (listState.isScrollInProgress) openId = null }
     // While a drag is on, the list shows this working order; otherwise it shows the database order
     var shown by remember { mutableStateOf(emptyList<ExerciseRow>()) }
     var draggingId by remember { mutableStateOf<Long?>(null) }
@@ -192,7 +204,7 @@ private fun DayEditor(dao: PlanDao, day: Day, onBack: () -> Unit, onDelete: () -
 
     /** Accessibility route (and tests): moves one exercise up (-1) or down (+1) without dragging. */
     fun move(id: Long, by: Int) {
-        val cur = rows ?: return
+        val cur = latest ?: return
         val from = cur.indexOfFirst { it.dayExerciseId == id }
         val to = from + by
         if (from < 0 || to !in cur.indices) return
@@ -210,7 +222,7 @@ private fun DayEditor(dao: PlanDao, day: Day, onBack: () -> Unit, onDelete: () -
     }
 
     fun dragStart(id: Long) {
-        val cur = rows
+        val cur = latest
         if (draggingId != null || cur == null) return
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         shown = cur
@@ -254,7 +266,7 @@ private fun DayEditor(dao: PlanDao, day: Day, onBack: () -> Unit, onDelete: () -
         if (draggingId != id) return
         val ids = shown.map { it.dayExerciseId }
         scope.launch {
-            if (ids != rows?.map { it.dayExerciseId }) dao.reorder(ids)
+            if (ids != latest?.map { it.dayExerciseId }) dao.reorder(ids)
             // Settle into the slot on a spring that starts from wherever the card is
             animate(dragOffset, 0f, animationSpec = appleSpring(1f, 0.3f)) { v, _ -> dragOffset = v }
             draggingId = null
@@ -291,7 +303,9 @@ private fun DayEditor(dao: PlanDao, day: Day, onBack: () -> Unit, onDelete: () -
                     val lift by animateFloatAsState(if (dragging) 1f else 0f, motionSpec(1f, 0.3f), label = "lift")
                     val shadow = with(density) { 14.dp.toPx() }
                     SwipeToRemove(
-                        onRemove = { remove(r, i) },
+                        open = openId == r.dayExerciseId,
+                        onOpenChange = { o -> openId = if (o) r.dayExerciseId else if (openId == r.dayExerciseId) null else openId },
+                        onRemove = { openId = null; remove(r, i) },
                         modifier = Modifier.fillMaxWidth()
                             .then(if (dragging) Modifier.zIndex(1f) else Modifier.animateItem()) // the dragged card follows the finger, the rest glide
                             .graphicsLayer {
@@ -307,12 +321,19 @@ private fun DayEditor(dao: PlanDao, day: Day, onBack: () -> Unit, onDelete: () -
                                 DragHandle(
                                     r.name, onMove = { move(r.dayExerciseId, it) },
                                     modifier = Modifier.pointerInput(r.dayExerciseId) {
-                                        detectVerticalDragGestures(
-                                            onDragStart = { dragStart(r.dayExerciseId) },
-                                            onDragEnd = { dragEnd(r.dayExerciseId) },
-                                            onDragCancel = { dragEnd(r.dayExerciseId) },
-                                            onVerticalDrag = { change, dy -> change.consume(); dragBy(r.dayExerciseId, dy) },
-                                        )
+                                        // No touch slop: the card is under the finger from the first pixel
+                                        awaitEachGesture {
+                                            val down = awaitFirstDown(requireUnconsumed = false)
+                                            down.consume()
+                                            dragStart(r.dayExerciseId)
+                                            drag(down.id) { change ->
+                                                val dy = change.positionChange().y // read before consuming: a consumed change reports zero movement
+                                                change.consume()
+                                                dragBy(r.dayExerciseId, dy)
+                                            }
+
+                                            dragEnd(r.dayExerciseId)
+                                        }
                                     },
                                 )
                                 Column(Modifier.weight(1f).padding(start = 4.dp, top = 12.dp, bottom = 12.dp)) {
@@ -361,6 +382,7 @@ private fun DayEditor(dao: PlanDao, day: Day, onBack: () -> Unit, onDelete: () -
     }
 
     if (adding) {
+        val names by remember { dao.exerciseNames() }.collectAsState(emptyList()) // only the sheet needs it
         var name by remember { mutableStateOf("") }
         var sets by remember { mutableIntStateOf(3) }
         var reps by remember { mutableIntStateOf(10) }

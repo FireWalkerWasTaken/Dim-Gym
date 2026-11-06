@@ -1,7 +1,6 @@
 package com.dimgym
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -129,7 +128,7 @@ fun AppCard(modifier: Modifier = Modifier, onClick: (() -> Unit)? = null, conten
     val c = MaterialTheme.colorScheme
     val src = remember { MutableInteractionSource() }
     val pressed by src.collectIsPressedAsState()
-    val fill by animateColorAsState(if (pressed && onClick != null) c.surfaceContainerHigh else c.surface, tween(90), label = "card")
+    val fill by animateThemedColor(if (pressed && onClick != null) c.surfaceContainerHigh else c.surface, tween(90))
     var m = modifier
     if (onClick != null) m = m.pressScale(src)
     m = m.clip(MaterialTheme.shapes.medium).drawBehind { drawRect(fill) }
@@ -157,8 +156,8 @@ fun PillButton(
     val c = MaterialTheme.colorScheme
     val src = remember { MutableInteractionSource() }
     val pressed by src.collectIsPressedAsState()
-    val container by animateColorAsState(if (prominent) c.primary else c.surfaceContainerHighest, tween(260), label = "btn")
-    val label by animateColorAsState(if (prominent) c.onPrimary else c.onSurface, tween(260), label = "btnText")
+    val container by animateThemedColor(if (prominent) c.primary else c.surfaceContainerHighest, tween(260))
+    val label by animateThemedColor(if (prominent) c.onPrimary else c.onSurface, tween(260))
     val dim by animateFloatAsState(if (pressed) 0.85f else 1f, tween(80), label = "btnDim")
     Box(
         modifier.heightIn(min = 56.dp).pressScale(src).alpha(if (enabled) 1f else 0.4f)

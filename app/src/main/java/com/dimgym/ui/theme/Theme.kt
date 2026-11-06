@@ -8,6 +8,9 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.material3.ColorScheme
 
 // Every token the M3 widgets read is set, so no default purple leaks into sheets, menus or dialogs.
 private val Dark = darkColorScheme(
@@ -55,11 +58,35 @@ private val AppShapes = Shapes(
     extraLarge = RoundedCornerShape(28.dp),
 )
 
+private const val THEME_MS = 300
+
+@Composable
+private fun anim(c: Color): Color = animateColorAsState(c, tween(THEME_MS), label = "theme").value
+
+/** Every colour the app reads glides to its new value, so a theme switch is a crossfade, not a flash. */
+@Composable
+private fun ColorScheme.animated() = copy(
+    primary = anim(primary), onPrimary = anim(onPrimary),
+    primaryContainer = anim(primaryContainer), onPrimaryContainer = anim(onPrimaryContainer),
+    secondary = anim(secondary), onSecondary = anim(onSecondary),
+    secondaryContainer = anim(secondaryContainer), onSecondaryContainer = anim(onSecondaryContainer),
+    tertiary = anim(tertiary), onTertiary = anim(onTertiary),
+    background = anim(background), onBackground = anim(onBackground),
+    surface = anim(surface), onSurface = anim(onSurface),
+    surfaceVariant = anim(surfaceVariant), onSurfaceVariant = anim(onSurfaceVariant),
+    surfaceContainerLowest = anim(surfaceContainerLowest), surfaceContainerLow = anim(surfaceContainerLow),
+    surfaceContainer = anim(surfaceContainer), surfaceContainerHigh = anim(surfaceContainerHigh),
+    surfaceContainerHighest = anim(surfaceContainerHighest),
+    outline = anim(outline), outlineVariant = anim(outlineVariant),
+    error = anim(error), onError = anim(onError),
+    inverseSurface = anim(inverseSurface), inverseOnSurface = anim(inverseOnSurface), inversePrimary = anim(inversePrimary),
+)
+
 @Composable
 fun DimGymTheme(dark: Boolean = true, content: @Composable () -> Unit) =
     MaterialTheme(
-        colorScheme = if (dark) Dark else Light,
-        typography = AppTypography, // was missing before, so Type.kt was never applied
+        colorScheme = (if (dark) Dark else Light).animated(),
+        typography = AppTypography,
         shapes = AppShapes,
         content = content,
     )

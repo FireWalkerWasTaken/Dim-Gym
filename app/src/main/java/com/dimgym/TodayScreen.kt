@@ -2,7 +2,6 @@ package com.dimgym
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -323,8 +322,8 @@ private fun ProgressRing(count: Int, total: Int) {
 @Composable
 private fun CheckDot(checked: Boolean, name: String, onToggle: () -> Unit) {
     val c = MaterialTheme.colorScheme
-    val fill by animateColorAsState(if (checked) c.primary else Color.Transparent, tween(160), label = "fill")
-    val ring by animateColorAsState(if (checked) c.primary else c.outline, tween(160), label = "ring")
+    val fill by animateThemedColor(if (checked) c.primary else Color.Transparent, tween(160))
+    val ring by animateThemedColor(if (checked) c.primary else c.outline, tween(160))
     Box(
         Modifier.size(56.dp)
             .semantics { contentDescription = "Mark $name done" }

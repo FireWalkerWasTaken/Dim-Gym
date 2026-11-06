@@ -1,7 +1,6 @@
 package com.dimgym
 
 import androidx.activity.compose.PredictiveBackHandler
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -68,6 +67,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.layout.onSizeChanged
 
 val NavBarContent = 44.dp
 val TabBarContent = 56.dp
@@ -221,7 +223,7 @@ fun TabBar(items: List<TabItem>, selected: Int, onSelect: (Int) -> Unit, modifie
                 items.forEachIndexed { i, item ->
                     val on = i == selected
                     val src = remember { MutableInteractionSource() }
-                    val tint by animateColorAsState(if (on) c.primary else c.onSurfaceVariant, tween(200), label = "tabtint")
+                    val tint by animateThemedColor(if (on) c.primary else c.onSurfaceVariant, tween(200))
                     Column(
                         Modifier.weight(1f).fillMaxHeight().pressScale(src, 0.92f)
                             .selectable(selected = on, interactionSource = src, indication = null, role = Role.Tab, onClick = { onSelect(i) }),
@@ -263,11 +265,17 @@ fun <T : Any> DrillHost(
     val scope = rememberCoroutineScope()
     val progress = remember { Animatable(0f) }
     var shown by remember { mutableStateOf<T?>(null) } // kept after detail clears so the page can slide out
-    val spec = motionSpec<Float>(1f, 0.42f)
+    var widthPx by remember { mutableFloatStateOf(0f) }
+    // 0.0005 cutoff: the default 0.01 would end the spring ~10 px early and pop the page into place
+    val spec = motionSpec<Float>(1f, 0.4f, 0.0005f)
 
     LaunchedEffect(detail) {
         if (detail != null) {
             shown = detail
+            // The page is composed this frame, off-screen. Let it lay out and draw once before moving,
+            // so its first-composition cost never lands inside the animation.
+            withFrameNanos { }
+            withFrameNanos { }
             progress.animateTo(1f, spec)
         } else {
             progress.animateTo(0f, spec)
@@ -284,13 +292,12 @@ fun <T : Any> DrillHost(
         }
     }
 
-    BoxWithConstraints(modifier.fillMaxSize()) {
-        val width = constraints.maxWidth.toFloat()
+    Box(modifier.fillMaxSize().onSizeChanged { widthPx = it.width.toFloat() }) {
         Box(
-            Modifier.fillMaxSize().graphicsLayer { if (!reduce) translationX = -progress.value * width * 0.28f },
+            Modifier.fillMaxSize().graphicsLayer { if (!reduce) translationX = -progress.value * widthPx * 0.28f },
         ) { root() }
 
-        val item = shown
+        val item = detail ?: shown // composed the moment you tap, not a frame later
         if (item != null) {
             // Dims the root, and swallows touches on it while the page is open
             Box(
@@ -302,7 +309,7 @@ fun <T : Any> DrillHost(
             Box(
                 Modifier.fillMaxSize()
                     .graphicsLayer {
-                        if (reduce) alpha = progress.value else translationX = (1f - progress.value) * width
+                        if (reduce) alpha = progress.value else translationX = (1f - progress.value) * widthPx
                     }
                     .background(c.background)
                     .pointerInput(Unit) {},

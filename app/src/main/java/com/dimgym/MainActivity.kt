@@ -1,6 +1,6 @@
 package com.dimgym
-
-import android.graphics.Color
+import androidx.compose.runtime.SideEffect
+import androidx.core.view.WindowCompat
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -58,34 +58,41 @@ class MainActivity : ComponentActivity() {
         val dao = DimGymDb.get(applicationContext).dao()
         setContent {
             val settings by remember { dao.settings() }.collectAsState(null)
+            val fade = remember { ThemeFade() }
+            LaunchedEffect(settings?.theme) { fade.pending = null } // DB caught up
             var splash by rememberSaveable { mutableStateOf(true) }
-            // Shorter than before (was 1.5 s): the wait is pure latency, so it only covers the first build
             LaunchedEffect(Unit) { delay(1100); splash = false }
             val system = isSystemInDarkTheme()
-            val dark = when (settings?.theme) {
+            val dark = when (fade.pending ?: settings?.theme) {
                 "light" -> false
                 "system" -> system
-                else -> true // "dark", and the moment before settings load
+                else -> true
             }
-            // System bar icons follow the in-app theme (and stay light over the always-dark splash)
             val barsDark = dark || splash
-            DisposableEffect(barsDark) {
-                val bars = if (barsDark) SystemBarStyle.dark(Color.TRANSPARENT) else SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
-                enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
-                onDispose {}
+            val controller = remember { WindowCompat.getInsetsController(window, window.decorView) }
+            // Only the icon colour flips. No window re-setup during the switch.
+            SideEffect {
+                controller.isAppearanceLightStatusBars = !barsDark
+                controller.isAppearanceLightNavigationBars = !barsDark
             }
             DimGymTheme(dark = dark) {
-                CompositionLocalProvider(LocalReduceMotion provides rememberReduceMotion()) {
+                CompositionLocalProvider(
+                    LocalReduceMotion provides rememberReduceMotion(),
+                    LocalThemeFade provides fade,
+                ) {
                     val reduce = LocalReduceMotion.current
                     // The app settles forward as the splash lifts: 96% to 100%, on a critically damped spring
                     val reveal by animateFloatAsState(if (splash) 0f else 1f, motionSpec(1f, 0.6f), label = "reveal")
                     Box(Modifier.fillMaxSize()) {
-                        DimGymApp(
-                            Modifier.graphicsLayer {
-                                val s = if (reduce) 1f else 0.96f + 0.04f * reveal
-                                scaleX = s; scaleY = s
-                            },
-                        ) // builds behind the splash, so it is ready when the splash lifts
+                        // Dark/light switch: the old theme is frozen as a picture and fades out over the new one
+                        ThemeCrossfade(fade) {
+                            DimGymApp(
+                                Modifier.graphicsLayer {
+                                    val s = if (reduce) 1f else 0.96f + 0.04f * reveal
+                                    scaleX = s; scaleY = s
+                                },
+                            ) // builds behind the splash, so it is ready when the splash lifts
+                        }
                         AnimatedVisibility(
                             splash,
                             exit = fadeOut(tween(if (reduce) 150 else 380)) + (if (reduce) scaleOut(targetScale = 1f) else scaleOut(tween(380), targetScale = 1.05f)),

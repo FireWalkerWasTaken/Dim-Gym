@@ -71,6 +71,7 @@ fun SettingsScreen() {
     val ctx = LocalContext.current
     val dao = DimGymDb.get(ctx).dao()
     val scope = rememberCoroutineScope()
+    val themeFade = LocalThemeFade.current
     val settings by remember { dao.settings() }.collectAsState(null)
     var confirmImport by remember { mutableStateOf(false) }
     val scroll = rememberScrollState()
@@ -128,8 +129,8 @@ fun SettingsScreen() {
                     Segmented(listOf("kg", "lb"), s.unit, { it }) { u -> scope.launch { dao.save(s.copy(unit = u)) } }
                 }
                 Section("Appearance", Modifier.staggerIn(2), "System follows your phone's light and dark setting.") {
-                    Segmented(listOf("system", "dark", "light"), s.theme, { it.replaceFirstChar(Char::uppercase) }) { t ->
-                        scope.launch { dao.save(s.copy(theme = t)) }
+                    Segmented(listOf("system", "dark", "light"), themeFade.effective(s.theme), { it.replaceFirstChar(Char::uppercase) }) { t ->
+                        scope.launch { themeFade.switchTo(t) { dao.save(s.copy(theme = t)) } }
                     }
                 }
                 Section("Daily reminder", Modifier.staggerIn(3), "A nudge at your chosen time. Skipped on rest days.") {
